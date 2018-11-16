@@ -1,7 +1,7 @@
 path = "/data/zrb/Trajectory-data/dssm"
 model = 'DNN-v1'
-EPOCH_NUM = 5
-BATCH_SIZE = 1024
+EPOCH_NUM = 30
+BATCH_SIZE = 256
 
 import time
 from sklearn.model_selection import train_test_split
@@ -15,6 +15,7 @@ import six.moves.cPickle as pickle
 from sklearn.utils import shuffle
 import os
 import math
+import json
 
 
 def print_and_log(string, logger):
@@ -41,14 +42,16 @@ f = open('./data/input_geo.pkl','rb')
 data = pickle.load(f)
 f.close()
 
+#data = data[0:5000]
+
 train,test = train_test_split(data,test_size = 0.05,random_state=20,shuffle=True)
 train,dev = train_test_split(train,test_size=0.05,random_state=20,shuffle=True)
 
 print("train:{} dev:{} test:{}".format(train.shape,dev.shape,test.shape))
 
 TRA_LENGTH = len(train['tra1'][0])
-DNN1 = 32768
-DNN2 = 2048
+DNN1 = 4096
+DNN2 = 1024
 DNN3 = 128
 
 from keras.layers import Dense,Dropout,Input,Flatten,Activation,Reshape
@@ -96,60 +99,81 @@ def DnnModel():
     dnn3_2 = dnn3(reshape2_2)
     reshape3_2 = reshape3(dnn3_2)
     output2 = output(reshape3_2)
-    y = Dot(axes=1,normalize=True)([output1,output2])
+    y = Dot(axes=1,normalize=True,name='y')([output1,output2])
 
 
     model = Model(inputs=[input1,input2],output=y)
     opt = Adam(lr=1e-4)
-    model.compile(loss='binary_crossentropy',optimizer=opt,metrics=["binary_crossentropy"])
+    model.compile(loss='mean_squared_error',optimizer=opt,metrics=["mean_squared_error","hinge"])
     return model
 
+
 def get_callbacks(filepath, patience=2):
-   es = EarlyStopping('val_loss', patience=20, mode="min")
-   msave = ModelCheckpoint(filepath, save_best_only=True)
-   return [es, msave]
+    es = EarlyStopping('mean_squared_error', patience=2, mode="min")
+    msave = ModelCheckpoint(filepath, save_best_only=True,monitor='mean_squared_error',mode='min')
+    return [es, msave]
+
+def generate_data(data):
+    STEP = math.ceil(len(data) / BATCH_SIZE)
+    while 1:
+        data = shuffle(data)
+        for j in range(1, STEP + 1):
+            tra1 = np.array(
+                [np.array(tra1).reshape(TRA_LENGTH, ) for tra1 in data[(j - 1) * BATCH_SIZE:j * BATCH_SIZE]['tra1']])
+            tra2 = np.array(
+                [np.array(tra2).reshape(TRA_LENGTH, ) for tra2 in data[(j - 1) * BATCH_SIZE:j * BATCH_SIZE]['tra2']])
+            y = np.array([np.array([y]).reshape(1, ) for y in data[(j - 1) * BATCH_SIZE:j * BATCH_SIZE]['label']])
+            yield ({'trajectory1':tra1,'trajectory2':tra2},{'y':y})
+
+def counter():
+    i = 1
+    while 1:
+        yield i
+        i += 1
 
 def main(train,test,dev):
-    #print("Prepare dev set and test set.")
-    #dev_tra1 = np.load("./data/dev_tra1.npy") #np.array([np.array(tra1).reshape(TRA_LENGTH, ) for tra1 in dev['tra1']])
-    #dev_tra2 = np.load("./data/dev_tra2.npy") #np.array([np.array(tra2).reshape(TRA_LENGTH, ) for tra2 in dev['tra2']])
-    #dev_y = np.load("./data/dev_y.npy") #np.array([np.array([y]).reshape(1, ) for y in dev['label']])
-    #test_tra1 = np.load("./data/test_tra1.npy") #np.array([np.array(tra1).reshape(TRA_LENGTH, ) for tra1 in test['tra1']])
-    #test_tra2 = np.load("./data/test_tra2.npy") #np.array([np.array(tra2).reshape(TRA_LENGTH, ) for tra2 in test['tra2']])
-    #test_y = np.load("./data/test_y.npy") #np.array([np.array([y]).reshape(1, ) for y in test['label']])
+    print("Prepare dev set and test set.")
+    dev_tra1 = np.load("./data/dev_tra1.npy")  #  np.array([np.array(tra1).reshape(TRA_LENGTH, ) for tra1 in dev['tra1']])
+    dev_tra2 = np.load("./data/dev_tra2.npy") #np.array([np.array(tra2).reshape(TRA_LENGTH, ) for tra2 in dev['tra2']])
+    dev_y = np.load("./data/dev_y.npy") #np.array([np.array([y]).reshape(1, ) for y in dev['label']])
+    test_tra1 = np.load("./data/test_tra1.npy") #np.array([np.array(tra1).reshape(TRA_LENGTH, ) for tra1 in test['tra1']])
+    test_tra2 = np.load("./data/test_tra2.npy") #np.array([np.array(tra2).reshape(TRA_LENGTH, ) for tra2 in test['tra2']])
+    test_y = np.load("./data/test_y.npy") #np.array([np.array([y]).reshape(1, ) for y in test['label']])
     #TEST_NUM = len(test)
-    y_pred = []
+    STEP = math.ceil(len(train) / BATCH_SIZE)
     cur_model = DnnModel()
     print_and_log("N_train: {}".format(len(train)), logger)
     print_and_log("Batch_size: {}".format(BATCH_SIZE), logger)
-    for i in range(1,EPOCH_NUM+1):
-        print_and_log("Epoch: {}".format(i), logger)
-        STEP = math.ceil(len(train) / BATCH_SIZE)
-        print_and_log("Steps_per_epoch: {}".format(STEP), logger)
-        train = shuffle(train)
-        test_score = 0.0
-        for j in range(1,STEP+1):
-            tra1 = np.array([np.array(tra1).reshape(TRA_LENGTH, ) for tra1 in train[(j-1)*BATCH_SIZE:j*BATCH_SIZE]['tra1']])
-            tra2 = np.array([np.array(tra2).reshape(TRA_LENGTH, ) for tra2 in train[(j - 1) * BATCH_SIZE:j * BATCH_SIZE]['tra2']])
-            y = np.array([np.array([y]).reshape(1, ) for y in train[(j - 1) * BATCH_SIZE:j * BATCH_SIZE]['label']])
-            callbacks = get_callbacks(filepath=file_path, patience=10)
-            history =cur_model.fit([tra1,tra2],y,epochs=1,verbose=1,callbacks=callbacks,shuffle=True)
-            score = cur_model.evaluate([tra1,tra2],y,verbose=1)
-            print_and_log('epoch {}, batch {}, Train loss: {}'.format(i,j, score[0]), logger)
-            #score = cur_model.evaluate([dev_tra1,dev_tra2],dev_y,verbose=1)
-            #print_and_log('epoch {}, batch {}, Dev loss: {}'.format(i,j, score[0]), logger)
-            #score = cur_model.evaluate([test_tra1,test_tra2],test_y,verbose=1)
-            #print_and_log('epoch {}, batch {}, Test loss: {}'.format(i,j, score[0]), logger)
-            if j == STEP:
-                test_score = score[0]
-        file_path = 'output/' + model + "-" + cur_time + "/{}_model_weights.hdf5".format(i)
-        print_and_log('Epoch: {}, Test loss: {}'.format(i, test_score), logger)
-        #tmp = cur_model.predict([test_tra1,test_tra2],verbose=1)
-        #y_pred.append(tmp)
-    return np.array(y_pred)
+    print_and_log("Steps_per_epoch: {}".format(STEP), logger)
+    data_flow = generate_data(train)
+    c = counter()
+    file_path = 'output/' + model + '-' + cur_time + "/aug_model_weights.hdf5" #% next(c)
+    callbacks = get_callbacks(filepath=file_path,patience=10)
+    history = cur_model.fit_generator(
+        data_flow,
+        steps_per_epoch=STEP,
+        epochs=EPOCH_NUM,
+        shuffle=True,
+        use_multiprocessing=True,
+        verbose=1,
+        validation_data=([dev_tra1,dev_tra2],dev_y),
+        callbacks=callbacks)
+    cur_model.load_weights(filepath=file_path)
+    score = cur_model.evaluate_generator(data_flow,steps=STEP)
+    print_and_log('Train loss: {}'.format(score[0]), logger)
+    print_and_log('Train hinge: {}'.format(score[2]), logger)
+    score = cur_model.evaluate([dev_tra1,dev_tra2],dev_y,verbose=1)
+    print_and_log('Val loss: {}'.format(score[0]), logger)
+    print_and_log('Val hinge: {}'.format(score[2]), logger)
+    score = cur_model.evaluate([test_tra1,test_tra2],test_y,verbose=1)
+    print_and_log('Test loss: {}'.format(score[0]), logger)
+    print_and_log('Test hinge: {}'.format(score[2]), logger)
+    y_pred = cur_model.predict([test_tra1,test_tra2])
+    y_pred = y_pred.reshape(y_pred.shape[0])
+    return [history.history,np.array(y_pred)]
 
-preds = main(train,test,dev)
+[history,preds] = main(train,test,dev)
 np.save('output/' + model + "-" + cur_time + "/preds.npy",preds)
-
-
-
+with open('output/' + model + "-" + cur_time + "/history.json",'a') as outfile:
+    json.dump(history,outfile,ensure_ascii=False)
+    outfile.write('\n')
