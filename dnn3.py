@@ -14,20 +14,21 @@ import math
 import json
 
 path = "/data/zrb/Trajectory-data/dssm"
-model = 'DNN-v1'
+model = 'DNN-v2'
 BATCH_SIZE = 256
 
 # Input: input path & output path
-EPOCH_NUM,gpu,LOSS,PATIENCE = 30,"0","mean_squared_error",5
+EPOCH_NUM,gpu,LOSS,PATIENCE,LAST_MODEL = 30,"0","mean_squared_error",5,""
 
-if len(sys.argv) != 5:
-	print("Parameters: EPOCH_NUM,CUDA_DIVICE,LOSS,PATIENCE")
+if len(sys.argv) != 6:
+	print("Parameters: EPOCH_NUM,CUDA_DIVICE,LOSS,PATIENCE,LAST_MODEL")
 	sys.exit()
 else:
     EPOCH_NUM = int(sys.argv[1].strip())
     gpu = sys.argv[2].strip()
     LOSS = sys.argv[3].strip()
     PATIENCE = int(sys.argv[4].strip())
+    LAST_MODEL = sys.argv[5].strip()
 
 def print_and_log(string, logger):
     print(string)
@@ -45,6 +46,7 @@ print_and_log('EPOCH_NUM: {}'.format(EPOCH_NUM), logger)
 print_and_log('CUDA_DIVICE: {}'.format(gpu), logger)
 print_and_log('LOSS: {}'.format(LOSS), logger)
 print_and_log('PATIENCE: {}'.format(PATIENCE), logger)
+print_and_log('LAST_MODEL:{}'.format(LAST_MODEL),logger)
 import tensorflow as tf
 from keras.backend.tensorflow_backend import set_session
 
@@ -68,9 +70,11 @@ train,dev = train_test_split(train,test_size=0.05,random_state=20,shuffle=True)
 print("train:{} dev:{} test:{}".format(train.shape,dev.shape,test.shape))
 
 TRA_LENGTH = len(train['tra1'][0])
-DNN1 = 4096
-DNN2 = 1024
-DNN3 = 128
+DNN1 = 8192
+DNN2 = 2048
+DNN3 = 512
+DNN4 = 256
+DNN5 = 128
 
 from keras.layers import Dense,Dropout,Input,Flatten,Activation,Reshape,Lambda
 from keras.layers.merge import Dot
@@ -91,7 +95,13 @@ def DnnModel():
     dropout2 = Dropout(0.8)
     reshape2 = Reshape((DNN2,))
     dnn3 = Dense(DNN3,activation='relu')
-    output = Reshape((DNN3,))
+    dropout3 = Dropout(0.8)
+    reshape3 = Reshape((DNN3,))
+    dnn4 = Dense(DNN4,activation='relu')
+    dropout4 = Dropout(0.8)
+    reshape4 = Reshape((DNN4,))
+    dnn5 = Dense(DNN5,activation='relu')
+    output = Reshape((DNN5,))
     #output = Activation('softmax')
     #Model
     #trajectory1
@@ -105,7 +115,15 @@ def DnnModel():
     reshape2_1 = reshape2(drop2_1)
     print("reshape2_1:{}".format(reshape2_1.shape))
     dnn3_1 = dnn3(reshape2_1)
-    output1 = output(dnn3_1)
+    drop3_1 = dropout3(dnn3_1)
+    reshape3_1 = reshape3(drop3_1)
+    print("reshape3_1:{}".format(reshape3_1.shape))
+    dnn4_1 = dnn4(reshape3_1)
+    drop4_1 = dropout4(dnn4_1)
+    reshape4_1 = reshape4(drop4_1)
+    print("reshape4_1:{}".format(reshape4_1.shape))
+    dnn5_1 = dnn5(reshape4_1)
+    output1 = output(dnn5_1)
     print("output1:{}".format(output1.shape))
     #trajectory2
     dnn1_2 = dnn1(input2)
@@ -115,7 +133,13 @@ def DnnModel():
     drop2_2 = dropout2(dnn2_2)
     reshape2_2 = reshape2(drop2_2)
     dnn3_2 = dnn3(reshape2_2)
-    output2 = output(dnn3_2)
+    drop3_2 = dropout3(dnn3_2)
+    reshape3_2 = reshape3(drop3_2)
+    dnn4_2 = dnn4(reshape3_2)
+    drop4_2 = dropout4(dnn4_2)
+    reshape4_2 = reshape4(drop4_2)
+    dnn5_2 = dnn5(reshape4_2)
+    output2 = output(dnn5_2)
     #y = Dot(axes=1,normalize=True,name='y')([output1,output2])
     def cosine(inputs):
         x,y = inputs
@@ -166,6 +190,8 @@ def main(train,test,dev):
     #TEST_NUM = len(test)
     STEP = math.ceil(len(train) / BATCH_SIZE)
     cur_model = DnnModel()
+    cur_model.load_weights('./output/' + LAST_MODEL + '/aug_model_weights.hdf5')
+    print_and_log("Load Model: {}".format(LAST_MODEL + "/aug_model_weights.hdf5"), logger)
     print_and_log("N_train: {}".format(len(train)), logger)
     print_and_log("Batch_size: {}".format(BATCH_SIZE), logger)
     print_and_log("Steps_per_epoch: {}".format(STEP), logger)
